@@ -1,0 +1,48 @@
+# ============================================================
+# Eclipse ioFog Application Manifest (ioFog 3.x Specification)
+# Smart Water Quality Monitoring System
+# ============================================================
+apiVersion: iofog.org/v3
+kind: Application
+metadata:
+  name: smart-water-monitoring
+  namespace: default
+spec:
+  microservices:
+    # --- Microservice 1: Mosquitto MQTT Broker ---
+    - name: mosquitto-broker
+      agent:
+        name: local-agent
+      images:
+        x86: eclipse-mosquitto:2
+        arm: eclipse-mosquitto:2
+      ports:
+        - internal: 1883
+          external: 1883
+        - internal: 9001
+          external: 9001
+
+    # --- Microservice 2: Eclipse ioFog Edge Processing Layer ---
+    - name: iofog-edge-processor
+      agent:
+        name: local-agent
+      images:
+        x86: smart-water-iofog-edge-processor:latest
+        arm: smart-water-iofog-edge-processor:latest
+
+    # --- Microservice 3: Python Sensor Simulator ---
+    - name: sensor-simulator
+      agent:
+        name: local-agent
+      images:
+        x86: smart-water-monitoring-simulator:latest
+        arm: smart-water-monitoring-simulator:latest
+
+  routes:
+    - name: simulator-to-mosquitto
+      from: sensor-simulator
+      to: mosquitto-broker
+    - name: mosquitto-to-edge
+      from: mosquitto-broker
+      to: iofog-edge-processor
+

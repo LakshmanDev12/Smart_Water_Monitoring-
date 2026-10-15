@@ -1,0 +1,341 @@
+[
+    {
+        "id": "flow_main",
+        "type": "tab",
+        "label": "Water Quality Edge Processing",
+        "disabled": false,
+        "info": "Edge Computing Layer - Validates sensor data, applies thresholds, classifies status, and forwards to InfluxDB, Ditto, and Alert systems."
+    },
+    {
+        "id": "mqtt_broker_config",
+        "type": "mqtt-broker",
+        "name": "Mosquitto Broker",
+        "broker": "mosquitto",
+        "port": "1883",
+        "clientid": "nodered-edge",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "sessionExpiry": ""
+    },
+    {
+        "id": "mqtt_in",
+        "type": "mqtt in",
+        "z": "flow_main",
+        "name": "Water Sensor Data",
+        "topic": "water/tank/+/sensors",
+        "qos": "1",
+        "datatype": "auto",
+        "broker": "mqtt_broker_config",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 130,
+        "y": 200,
+        "wires": [
+            [
+                "json_parse"
+            ]
+        ]
+    },
+    {
+        "id": "json_parse",
+        "type": "json",
+        "z": "flow_main",
+        "name": "Parse JSON",
+        "property": "payload",
+        "action": "obj",
+        "pretty": false,
+        "x": 330,
+        "y": 200,
+        "wires": [
+            [
+                "validate"
+            ]
+        ]
+    },
+    {
+        "id": "validate",
+        "type": "function",
+        "z": "flow_main",
+        "name": "✅ Data Validation",
+        "func": "// ============================================\n// DATA VALIDATION - Edge Processing Step 1\n// ============================================\n// Validates incoming sensor data for completeness\n// and value range correctness.\n// Output 1: Valid data\n// Output 2: Invalid data (rejected)\n// ============================================\n\nvar data = msg.payload;\nvar errors = [];\n\n// Check required fields exist\nif (!data.tankId || typeof data.tankId !== 'string') {\n    errors.push('Missing or invalid tankId');\n}\nif (data.pH === undefined || data.pH === null || typeof data.pH !== 'number') {\n    errors.push('Missing or invalid pH');\n}\nif (data.turbidity === undefined || data.turbidity === null || typeof data.turbidity !== 'number') {\n    errors.push('Missing or invalid turbidity');\n}\nif (data.temperature === undefined || data.temperature === null || typeof data.temperature !== 'number') {\n    errors.push('Missing or invalid temperature');\n}\nif (data.waterLevel === undefined || data.waterLevel === null || typeof data.waterLevel !== 'number') {\n    errors.push('Missing or invalid waterLevel');\n}\nif (!data.timestamp) {\n    errors.push('Missing timestamp');\n}\n\n// Validate value ranges\nif (typeof data.pH === 'number' && (data.pH < 0 || data.pH > 14)) {\n    errors.push('pH out of range (0-14): ' + data.pH);\n}\nif (typeof data.turbidity === 'number' && data.turbidity < 0) {\n    errors.push('Turbidity cannot be negative: ' + data.turbidity);\n}\nif (typeof data.temperature === 'number' && (data.temperature < -50 || data.temperature > 100)) {\n    errors.push('Temperature out of sensor range (-50 to 100): ' + data.temperature);\n}\nif (typeof data.waterLevel === 'number' && (data.waterLevel < 0 || data.waterLevel > 100)) {\n    errors.push('Water level out of range (0-100): ' + data.waterLevel);\n}\n\nif (errors.length > 0) {\n    // Invalid data - send to output 2\n    msg.payload = {\n        error: 'Validation failed',\n        reasons: errors,\n        originalData: data\n    };\n    node.warn('Data validation failed for ' + (data.tankId || 'unknown') + ': ' + errors.join(', '));\n    return [null, msg];\n}\n\n// Valid data - send to output 1\nreturn [msg, null];",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 200,
+        "wires": [
+            [
+                "threshold_analysis"
+            ],
+            [
+                "debug_invalid"
+            ]
+        ]
+    },
+    {
+        "id": "debug_invalid",
+        "type": "debug",
+        "z": "flow_main",
+        "name": "❌ Invalid Data",
+        "active": true,
+        "tosidebar": true,
+        "console": true,
+        "tostatus": true,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "payload.error",
+        "statusType": "auto",
+        "x": 750,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "threshold_analysis",
+        "type": "function",
+        "z": "flow_main",
+        "name": "📊 Threshold Analysis & Classification",
+        "func": "// ============================================\n// THRESHOLD ANALYSIS & STATUS CLASSIFICATION\n// Edge Processing Step 2\n// ============================================\n// Applies configurable thresholds to sensor data\n// and classifies overall tank status as:\n// SAFE / WARNING / UNSAFE\n// ============================================\n\nvar data = msg.payload;\nvar alerts = [];\nvar paramStatuses = [];\n\n// ============================================\n// CONFIGURABLE THRESHOLDS\n// Modify these values to adjust sensitivity\n// ============================================\nvar THRESHOLDS = {\n    pH: {\n        SAFE_MIN: 6.5,\n        SAFE_MAX: 8.5,\n        WARN_MIN: 5.5,\n        WARN_MAX: 9.5\n    },\n    turbidity: {\n        SAFE_MAX: 5,\n        WARN_MAX: 10\n    },\n    temperature: {\n        SAFE_MIN: 20,\n        SAFE_MAX: 35,\n        WARN_MAX: 40\n    },\n    waterLevel: {\n        SAFE_MIN: 30,\n        WARN_MIN: 10\n    }\n};\n\n// --- pH Analysis ---\nif (data.pH >= THRESHOLDS.pH.SAFE_MIN && data.pH <= THRESHOLDS.pH.SAFE_MAX) {\n    paramStatuses.push('SAFE');\n} else if (data.pH >= THRESHOLDS.pH.WARN_MIN && data.pH <= THRESHOLDS.pH.WARN_MAX) {\n    paramStatuses.push('WARNING');\n    if (data.pH < THRESHOLDS.pH.SAFE_MIN) {\n        alerts.push('Low pH detected: ' + data.pH);\n    } else {\n        alerts.push('High pH detected: ' + data.pH);\n    }\n} else {\n    paramStatuses.push('UNSAFE');\n    if (data.pH < THRESHOLDS.pH.WARN_MIN) {\n        alerts.push('CRITICAL: Very low pH: ' + data.pH);\n    } else {\n        alerts.push('CRITICAL: Very high pH: ' + data.pH);\n    }\n}\n\n// --- Turbidity Analysis ---\nif (data.turbidity <= THRESHOLDS.turbidity.SAFE_MAX) {\n    paramStatuses.push('SAFE');\n} else if (data.turbidity <= THRESHOLDS.turbidity.WARN_MAX) {\n    paramStatuses.push('WARNING');\n    alerts.push('High turbidity detected: ' + data.turbidity + ' NTU');\n} else {\n    paramStatuses.push('UNSAFE');\n    alerts.push('CRITICAL: Very high turbidity: ' + data.turbidity + ' NTU');\n}\n\n// --- Temperature Analysis ---\nif (data.temperature >= THRESHOLDS.temperature.SAFE_MIN && data.temperature <= THRESHOLDS.temperature.SAFE_MAX) {\n    paramStatuses.push('SAFE');\n} else if (data.temperature <= THRESHOLDS.temperature.WARN_MAX) {\n    paramStatuses.push('WARNING');\n    if (data.temperature < THRESHOLDS.temperature.SAFE_MIN) {\n        alerts.push('Low temperature detected: ' + data.temperature + '°C');\n    } else {\n        alerts.push('High temperature detected: ' + data.temperature + '°C');\n    }\n} else {\n    paramStatuses.push('UNSAFE');\n    alerts.push('CRITICAL: Very high temperature: ' + data.temperature + '°C');\n}\n\n// --- Water Level Analysis ---\nif (data.waterLevel >= THRESHOLDS.waterLevel.SAFE_MIN) {\n    paramStatuses.push('SAFE');\n} else if (data.waterLevel >= THRESHOLDS.waterLevel.WARN_MIN) {\n    paramStatuses.push('WARNING');\n    alerts.push('Low water level: ' + data.waterLevel + '%');\n} else {\n    paramStatuses.push('UNSAFE');\n    alerts.push('CRITICAL: Very low water level: ' + data.waterLevel + '%');\n}\n\n// --- Overall Status Classification ---\nvar overallStatus;\nif (paramStatuses.includes('UNSAFE')) {\n    overallStatus = 'UNSAFE';\n} else if (paramStatuses.includes('WARNING')) {\n    overallStatus = 'WARNING';\n} else {\n    overallStatus = 'SAFE';\n}\n\n// Build processed message\nmsg.payload = {\n    tankId: data.tankId,\n    pH: data.pH,\n    turbidity: data.turbidity,\n    temperature: data.temperature,\n    waterLevel: data.waterLevel,\n    status: overallStatus,\n    alerts: alerts,\n    timestamp: data.timestamp\n};\n\n// Store status in flow context for monitoring\nflow.set('lastStatus_' + data.tankId, {\n    status: overallStatus,\n    alerts: alerts,\n    timestamp: data.timestamp\n});\n\nnode.status({\n    fill: overallStatus === 'SAFE' ? 'green' : (overallStatus === 'WARNING' ? 'yellow' : 'red'),\n    shape: 'dot',\n    text: data.tankId + ': ' + overallStatus\n});\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 830,
+        "y": 200,
+        "wires": [
+            [
+                "prepare_influx",
+                "prepare_ditto",
+                "check_alert",
+                "debug_processed"
+            ]
+        ]
+    },
+    {
+        "id": "debug_processed",
+        "type": "debug",
+        "z": "flow_main",
+        "name": "📋 Processed Data",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1130,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "prepare_influx",
+        "type": "function",
+        "z": "flow_main",
+        "name": "📦 Prepare InfluxDB Write",
+        "func": "// ============================================\n// PREPARE INFLUXDB WRITE\n// Converts processed data to InfluxDB line protocol\n// and sets up HTTP request headers\n// ============================================\n\nvar data = msg.payload;\n\n// Get InfluxDB config from environment variables\nvar influxUrl = env.get('INFLUXDB_URL') || 'http://influxdb:8086';\nvar org = env.get('INFLUXDB_ORG') || 'WaterMonitoring';\nvar bucket = env.get('INFLUXDB_BUCKET') || 'water_quality';\nvar token = env.get('INFLUXDB_TOKEN') || 'my-super-secret-token-12345';\n\n// Build InfluxDB line protocol\n// Format: measurement,tag=value field=value timestamp\nvar lineProtocol = 'water_quality,tankId=' + data.tankId + ' ' +\n    'pH=' + data.pH + ',' +\n    'turbidity=' + data.turbidity + ',' +\n    'temperature=' + data.temperature + ',' +\n    'waterLevel=' + data.waterLevel + ',' +\n    'status=\"' + data.status + '\",' +\n    'alerts=\"' + (data.alerts.join('; ') || 'none') + '\"';\n\n// Set up HTTP request\ndelete msg.url;\ndelete msg.method;\nmsg.headers = {\n    'Authorization': 'Token ' + token,\n    'Content-Type': 'text/plain; charset=utf-8'\n};\nmsg.payload = lineProtocol;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1130,
+        "y": 200,
+        "wires": [
+            [
+                "influx_write"
+            ]
+        ]
+    },
+    {
+        "id": "influx_write",
+        "type": "http request",
+        "z": "flow_main",
+        "name": "Write to InfluxDB",
+        "method": "POST",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "http://influxdb:8086/api/v2/write?org=WaterMonitoring&bucket=water_quality&precision=ms",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": true,
+        "headers": [],
+        "x": 1370,
+        "y": 200,
+        "wires": [
+            [
+                "debug_influx"
+            ]
+        ]
+    },
+    {
+        "id": "debug_influx",
+        "type": "debug",
+        "z": "flow_main",
+        "name": "💾 InfluxDB Response",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": true,
+        "complete": "statusCode",
+        "targetType": "msg",
+        "statusVal": "statusCode",
+        "statusType": "auto",
+        "x": 1590,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "prepare_ditto",
+        "type": "function",
+        "z": "flow_main",
+        "name": "🔄 Prepare Ditto Update",
+        "func": "// ============================================\n// PREPARE ECLIPSE DITTO DIGITAL TWIN UPDATE\n// Formats processed data for Ditto REST API\n// PUT /api/2/things/water:{tankId}/features/waterQuality/properties\n// ============================================\n\nvar data = msg.payload;\n\n// Get Ditto URL from environment variables\nvar dittoUrl = env.get('DITTO_URL') || 'http://nginx/api/2';\n\n// Set up HTTP request to update digital twin\nmsg.url = dittoUrl + '/things/water:' + data.tankId + '/features/waterQuality/properties';\nmsg.method = 'PUT';\nmsg.headers = {\n    'Content-Type': 'application/json'\n};\n\nmsg.payload = {\n    pH: data.pH,\n    turbidity: data.turbidity,\n    temperature: data.temperature,\n    waterLevel: data.waterLevel,\n    status: data.status,\n    alerts: data.alerts,\n    timestamp: data.timestamp\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1130,
+        "y": 340,
+        "wires": [
+            [
+                "ditto_update"
+            ]
+        ]
+    },
+    {
+        "id": "ditto_update",
+        "type": "http request",
+        "z": "flow_main",
+        "name": "Update Ditto Twin",
+        "method": "use",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": true,
+        "headers": [],
+        "x": 1370,
+        "y": 340,
+        "wires": [
+            [
+                "debug_ditto"
+            ]
+        ]
+    },
+    {
+        "id": "debug_ditto",
+        "type": "debug",
+        "z": "flow_main",
+        "name": "🔗 Ditto Response",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": true,
+        "complete": "statusCode",
+        "targetType": "msg",
+        "statusVal": "statusCode",
+        "statusType": "auto",
+        "x": 1590,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "check_alert",
+        "type": "function",
+        "z": "flow_main",
+        "name": "🚨 Alert Check",
+        "func": "// ============================================\n// ALERT CHECK\n// Generates alert messages for WARNING/UNSAFE\n// conditions and publishes to water/alerts topic\n// ============================================\n\nvar data = msg.payload;\n\n// Only generate alerts for non-SAFE conditions\nif (data.status === 'SAFE') {\n    return [null, msg];\n}\n\n// Build alert message\nvar alertMsg = {\n    payload: JSON.stringify({\n        tankId: data.tankId,\n        status: data.status,\n        message: data.alerts.join(', '),\n        alerts: data.alerts,\n        pH: data.pH,\n        turbidity: data.turbidity,\n        temperature: data.temperature,\n        waterLevel: data.waterLevel,\n        timestamp: data.timestamp\n    })\n};\n\nnode.status({\n    fill: data.status === 'WARNING' ? 'yellow' : 'red',\n    shape: 'ring',\n    text: data.tankId + ': ' + data.status + ' - ' + data.alerts[0]\n});\n\nreturn [alertMsg, null];",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1120,
+        "y": 480,
+        "wires": [
+            [
+                "mqtt_alert_out",
+                "debug_alert"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "mqtt_alert_out",
+        "type": "mqtt out",
+        "z": "flow_main",
+        "name": "Publish Alert",
+        "topic": "water/alerts",
+        "qos": "1",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker_config",
+        "x": 1370,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "debug_alert",
+        "type": "debug",
+        "z": "flow_main",
+        "name": "🚨 Alert Published",
+        "active": true,
+        "tosidebar": true,
+        "console": true,
+        "tostatus": true,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "payload",
+        "statusType": "auto",
+        "x": 1370,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "comment_header",
+        "type": "comment",
+        "z": "flow_main",
+        "name": "🌊 Smart Water Quality Monitoring - Edge Processing Layer",
+        "info": "Edge Computing Layer Flow",
+        "x": 350,
+        "y": 60,
+        "wires": []
+    }
+]

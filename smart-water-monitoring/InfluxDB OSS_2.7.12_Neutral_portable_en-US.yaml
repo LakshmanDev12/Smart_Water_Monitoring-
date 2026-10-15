@@ -1,0 +1,39 @@
+PackageIdentifier: InfluxData.InfluxDB.OSS
+PackageVersion: 2.7.12
+PackageLocale: en-US
+Copyright: Copyright (c) 2018 InfluxData
+CopyrightUrl: https://github.com/influxdata/influxdb/blob/master/LICENSE
+Description: It is an integral component of the TICK stack. InfluxDB is meant to be
+  used as a backing store for any use case involving large amounts of timestamped
+  data, including DevOps monitoring, application metrics, IoT sensor data, and real-time
+  analytics.
+ShortDescription: InfluxDB is a time series database designed to handle high write
+  and query loads.
+License: MIT
+LicenseUrl: https://github.com/influxdata/influxdb/blob/master/LICENSE
+PackageName: InfluxDB OSS
+PackageUrl: https://docs.influxdata.com/influxdb/v1/introduction/download/
+Publisher: InfluxData Inc.
+PublisherSupportUrl: https://support.influxdata.com/
+PublisherUrl: https://www.influxdata.com/about/
+ReleaseNotesUrl: https://docs.influxdata.com/influxdb/v2/reference/release-notes/influxdb/#v2712
+Installers:
+- Architecture: neutral
+  InstallerType: zip
+  NestedInstallerType: portable
+  InstallerSha256: adb952c67eaeea742d81899367ec95defa26b47a0fa99dc773ab4de822e9072d
+  InstallerUrl: https://dl.influxdata.com/influxdb/releases/v2.7.12/influxdb2-2.7.12-windows.zip
+  ReleaseDate: 2025-05-20
+  InstallerAbortsTerminal: false
+  InstallLocationRequired: false
+  RequireExplicitUpgrade: false
+  DisplayInstallWarnings: false
+  DownloadCommandProhibited: false
+  ArchiveBinariesDependOnPath: true
+  UpgradeBehavior: uninstallPrevious
+  InstallModes:
+  - silent
+  NestedInstallerFiles:
+  - RelativeFilePath: influxd.exe
+ManifestVersion: 1.10.0
+ManifestType: merged

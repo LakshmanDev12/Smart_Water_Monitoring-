@@ -1,0 +1,19 @@
+apiVersion: iofog.org/v3
+kind: LocalControlPlane
+metadata:
+  name: local-controlplane
+  namespace: default
+spec:
+  systemAgent:
+    config:
+      arch: amd64
+  auth:
+    mode: embedded
+    bootstrap:
+      username: admin
+      password: Password123!
+  iofogUser:
+    email: admin@water.local
+    password: Password123!
+    name: Admin
+    surname: User
